@@ -17,7 +17,74 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  tauri-release:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.id }}
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            printf 'tag=%s\n' "${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            printf 'tag=%s\n' "${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Extract release notes
+        id: notes
+        shell: bash
+        env:
+          APP_NAME: Vmux
+          HAS_APPLE_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' && secrets.APPLE_ID != '' && secrets.APPLE_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.tag.outputs.tag }}"
+          VERSION_NUM="${VERSION#v}"
+
+          awk -v ver="$VERSION_NUM" '
+            /^## / { if (found) exit; if ($2 == ver) { found=1; next } }
+            found { print }
+          ' CHANGELOG.md > notes.md || true
+
+          if [ ! -s notes.md ]; then
+            printf 'Release %s\n' "$VERSION" > notes.md
+          fi
+
+          if [ "$HAS_APPLE_SIGNING" != "true" ]; then
+            {
+              printf '\n---\n\n'
+              printf '**macOS 用户注意**: 本应用暂未签名，首次运行需授权：\n\n'
+              printf '```bash\n'
+              printf 'sudo xattr -dr com.apple.quarantine /Applications/%s.app\n' "$APP_NAME"
+              printf '```\n'
+            } >> notes.md
+          fi
+
+          delimiter="EOF_notes_$(date +%s)"
+          {
+            printf 'notes<<%s\n' "$delimiter"
+            cat notes.md
+            printf '%s\n' "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+
+      - id: create
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Vmux ${{ steps.tag.outputs.tag }}
+          draft: true
+          prerelease: false
+          body: ${{ steps.notes.outputs.notes }}
+
+  build-tauri:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
@@ -32,29 +99,74 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
-      - uses: pnpm/action-setup@v4
+          ref: ${{ needs.create-release.outputs.tag }}
+
+      - name: Detect package manager
+        id: pm
+        shell: bash
+        run: |
+          PM=$(node -p "const fs=require('fs'); const p=require('./package.json').packageManager || ''; p.split('@')[0] || (fs.existsSync('bun.lock') || fs.existsSync('bun.lockb') ? 'bun' : fs.existsSync('pnpm-lock.yaml') ? 'pnpm' : fs.existsSync('yarn.lock') ? 'yarn' : 'npm')")
+          printf 'manager=%s\n' "$PM" >> "$GITHUB_OUTPUT"
+
+      - if: steps.pm.outputs.manager == 'bun'
+        uses: oven-sh/setup-bun@v2
+
+      - if: steps.pm.outputs.manager == 'pnpm'
+        uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
       - name: Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
-      - run: pnpm install --frozen-lockfile
-      - uses: tauri-apps/tauri-action@v0
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          case "${{ steps.pm.outputs.manager }}" in
+            bun) bun install --frozen-lockfile ;;
+            pnpm) pnpm install --frozen-lockfile ;;
+            yarn) yarn install --frozen-lockfile ;;
+            npm) npm ci ;;
+            *) echo "Unknown package manager" >&2; exit 1 ;;
+          esac
+
+      - name: Build Tauri bundles
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_CERTIFICATE || '' }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
+          APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_SIGNING_IDENTITY || '' }}
+          APPLE_ID: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_ID || '' }}
+          APPLE_PASSWORD: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.platform == 'macos-latest' && secrets.APPLE_TEAM_ID || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          releaseName: "Vmux ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+
+  publish-release:
+    needs: [create-release, build-tauri]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "${{ needs.create-release.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --draft=false
