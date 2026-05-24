@@ -1,0 +1,44 @@
+name: Deploy Landing
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "index.html"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "src/**"
+      - "public/**"
+      - "vercel.json"
+      - ".github/workflows/deploy-landing.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-landing
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm dlx vercel@52.0.0 pull --yes --environment=production --scope lovstudio --token=${{ secrets.VERCEL_TOKEN }}
+      - run: pnpm dlx vercel@52.0.0 build --prod --token=${{ secrets.VERCEL_TOKEN }}
+      - id: deploy
+        run: |
+          DEPLOYMENT_URL=$(pnpm dlx vercel@52.0.0 deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }})
+          echo "url=${DEPLOYMENT_URL}" >> "$GITHUB_OUTPUT"
+      - run: pnpm dlx vercel@52.0.0 alias set "${{ steps.deploy.outputs.url }}" vmux.lovstudio.ai --scope lovstudio --token=${{ secrets.VERCEL_TOKEN }}
