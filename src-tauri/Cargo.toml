@@ -1,6 +1,6 @@
 [package]
 name = "vmux"
-version = "0.1.0"
+version = "0.1.1"
 description = "A tmux-style desktop control surface for local web services."
 authors = ["Lovstudio"]
 license = ""

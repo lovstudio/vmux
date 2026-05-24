@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+### Patch Changes
+
+- Allow services to be saved without a command while keeping process actions disabled until a command is configured.
+
 ## 0.1.0
 
 - Add the Vmux desktop control surface for local development services.

@@ -247,7 +247,9 @@ impl AppState {
         let services = self.services.lock().map_err(|error| error.to_string())?;
         Ok(services
             .values()
-            .filter(|service| service.config.auto_start)
+            .filter(|service| {
+                service.config.auto_start && !service.config.command.trim().is_empty()
+            })
             .map(|service| service.config.id.clone())
             .collect())
     }
@@ -644,10 +646,6 @@ fn normalize_input(input: ServiceInput) -> Result<ServiceConfig, String> {
         return Err("Service path is required".into());
     }
 
-    if command.is_empty() {
-        return Err("Service command is required".into());
-    }
-
     let id = input
         .id
         .filter(|value| !value.trim().is_empty())
@@ -799,6 +797,10 @@ fn start_service_inner(state: &AppState, id: &str) -> Result<ServiceStatus, Stri
 
     if service.process.is_some() {
         return Ok(build_status(service, &state.logs_dir));
+    }
+
+    if service.config.command.trim().is_empty() {
+        return Err("Service command is required to start".into());
     }
 
     let workdir = Path::new(&service.config.path);
@@ -1542,7 +1544,9 @@ fn now_seconds() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_service_info, parse_pid_lines, DetectedServiceInfo};
+    use super::{
+        detect_service_info, normalize_input, parse_pid_lines, DetectedServiceInfo, ServiceInput,
+    };
 
     #[test]
     fn detects_vite_local_url_from_output() {
@@ -1584,6 +1588,26 @@ mod tests {
             parse_pid_lines("123\n456\n123\nnot-a-pid\n"),
             vec![123, 456]
         );
+    }
+
+    #[test]
+    fn normalizes_service_without_command() {
+        let config = normalize_input(ServiceInput {
+            id: None,
+            name: "Docs".into(),
+            path: "/tmp".into(),
+            command: "   ".into(),
+            url: Some(" http://localhost:3000 ".into()),
+            port: None,
+            auto_start: Some(true),
+            notes: None,
+            logo_path: None,
+        })
+        .expect("empty command should be accepted");
+
+        assert_eq!(config.command, "");
+        assert_eq!(config.name, "Docs");
+        assert_eq!(config.url, Some("http://localhost:3000".into()));
     }
 }
 

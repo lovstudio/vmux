@@ -1430,8 +1430,7 @@ function DesktopApp() {
             disabled={
               upsertMutation.isPending ||
               !draft.name.trim() ||
-              !draft.path.trim() ||
-              !draft.command.trim()
+              !draft.path.trim()
             }
             type="submit"
             variant="primary"
@@ -1724,6 +1723,7 @@ function ServiceContextMenu({
   service,
 }: ServiceContextMenuProps) {
   const isRunning = service.state === "ready" || service.state === "running";
+  const hasCommand = Boolean(service.command.trim());
 
   return (
     <div
@@ -1762,7 +1762,7 @@ function ServiceContextMenu({
       />
       <div className="my-1 h-px bg-border" />
       <MenuItem
-        disabled={isRunning || actionPending}
+        disabled={!hasCommand || isRunning || actionPending}
         icon={<Play className="h-4 w-4" />}
         label="Start"
         onClick={() => onAction("start")}
@@ -1774,7 +1774,7 @@ function ServiceContextMenu({
         onClick={() => onAction("stop")}
       />
       <MenuItem
-        disabled={actionPending}
+        disabled={!hasCommand || actionPending}
         icon={<RefreshCcw className="h-4 w-4" />}
         label="Restart"
         onClick={() => onAction("restart")}
@@ -2180,6 +2180,7 @@ function ProjectPanel({
   const [copiedLogs, setCopiedLogs] = useState(false);
   const logFrameRef = useRef<HTMLPreElement>(null);
   const isRunning = service.state === "ready" || service.state === "running";
+  const hasCommand = Boolean(service.command.trim());
   const logText = serviceLogText(service.logLines);
 
   async function copyLogs() {
@@ -2239,15 +2240,22 @@ function ProjectPanel({
         </button>
         <div className="grid grid-cols-[18px_minmax(0,1fr)] items-center gap-2 text-muted-foreground">
           <TerminalSquare className="h-4 w-4" />
-          <span className="truncate font-mono text-xs text-foreground">{service.command}</span>
+          <span
+            className={`truncate font-mono text-xs ${
+              hasCommand ? "text-foreground" : "text-muted-foreground"
+            }`}
+          >
+            {hasCommand ? service.command : "no command"}
+          </span>
         </div>
       </div>
 
       <div className="mb-3 grid grid-cols-3 gap-2">
         <Button
-          disabled={isRunning || actionPending}
+          disabled={!hasCommand || isRunning || actionPending}
           onClick={() => onAction("start")}
           size="sm"
+          title={hasCommand ? "Start" : "Add a command to start this project"}
           variant="primary"
         >
           <Play className="h-3.5 w-3.5" />
@@ -2262,7 +2270,12 @@ function ProjectPanel({
           <Square className="h-3.5 w-3.5" />
           Stop
         </Button>
-        <Button disabled={actionPending} onClick={() => onAction("restart")} size="sm">
+        <Button
+          disabled={!hasCommand || actionPending}
+          onClick={() => onAction("restart")}
+          size="sm"
+          title={hasCommand ? "Restart" : "Add a command to restart this project"}
+        >
           <RefreshCcw className="h-3.5 w-3.5" />
           Restart
         </Button>

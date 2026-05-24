@@ -1,7 +1,7 @@
 {
   "name": "vmux",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A desktop tmux-style control surface for local web services.",
   "type": "module",
   "packageManager": "pnpm@10.33.3",
@@ -14,6 +14,7 @@
     "tauri:build": "tauri build"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@tailwindcss/vite": "^4.3.0",
     "@tauri-apps/cli": "^2.11.2",
     "@types/react": "^19.2.15",
